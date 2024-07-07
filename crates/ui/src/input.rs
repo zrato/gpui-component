@@ -77,6 +77,7 @@ pub fn init(cx: &mut AppContext) {
 pub struct TextInput {
     focus_handle: FocusHandle,
     text: SharedString,
+    multiline: bool,
     prefix: Option<AnyView>,
     suffix: Option<AnyView>,
     placeholder: SharedString,
@@ -84,7 +85,7 @@ pub struct TextInput {
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
-    last_layout: Option<ShapedLine>,
+    last_layout: Option<Vec<ShapedLine>>,
     disabled: bool,
     masked: bool,
     appearance: bool,
@@ -99,6 +100,7 @@ impl TextInput {
         let input = Self {
             focus_handle: focus_handle.clone(),
             text: "".into(),
+            multiline: false,
             placeholder: "".into(),
             blink_cursor,
             selected_range: 0..0,
@@ -158,6 +160,12 @@ impl TextInput {
     pub fn set_masked(&mut self, masked: bool, cx: &mut ViewContext<Self>) {
         self.masked = masked;
         cx.notify();
+    }
+
+    /// Set as Textarea to support multiline.
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.multiline = multiline;
+        self
     }
 
     /// Set the appearance of the input field.
@@ -269,7 +277,10 @@ impl TextInput {
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(clipboard) = cx.read_from_clipboard() {
-            let new_text = clipboard.text().replace('\n', "");
+            let mut new_text = clipboard.text().to_string();
+            if !self.multiline {
+                new_text = new_text.replace('\n', "");
+            }
             self.replace_text_in_range(Some(self.selected_range.clone()), &new_text, cx);
         }
     }
@@ -454,11 +465,11 @@ impl ViewInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.left() + last_layout.first().unwrap().x_for_index(range.start),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.left() + last_layout.last().unwrap().x_for_index(range.end),
                 bounds.bottom(),
             ),
         ))
@@ -476,7 +487,7 @@ struct TextElement {
 }
 
 struct PrepaintState {
-    line: Option<ShapedLine>,
+    lines: Vec<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
 }
@@ -520,7 +531,7 @@ impl Element for TextElement {
         let text = input.text.clone();
         let placeholder = input.placeholder.clone();
         let selected_range = input.selected_range.clone();
-        let cursor = input.cursor_offset();
+        let cursor_offset = input.cursor_offset();
         let style = cx.text_style();
 
         let (disaplay_text, text_color) = if text.is_empty() {
@@ -571,43 +582,66 @@ impl Element for TextElement {
         };
 
         let font_size = style.font_size.to_pixels(cx.rem_size());
-        let line = cx
-            .text_system()
-            .shape_line(disaplay_text, font_size, &runs)
-            .unwrap();
+        let multiline = self.input.read(cx).multiline;
+        let mut cursor = None;
+        let mut selection = None;
+        let lines = disaplay_text.lines();
+        let line_height = cx.line_height();
 
-        let cursor_pos = line.x_for_index(cursor);
-        let (selection, cursor) = if selected_range.is_empty() && input.show_cursor(cx) {
-            (
-                None,
-                Some(fill(
-                    Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
-                        size(px(1.5), bounds.bottom() - bounds.top()),
-                    ),
-                    gpui::blue(),
-                )),
-            )
-        } else {
-            (
-                Some(fill(
-                    Bounds::from_corners(
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            bounds.left() + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
-                    ),
-                    cx.theme().selection,
-                )),
-                None,
-            )
-        };
+        let lines = lines
+            .enumerate()
+            .map(|(i, line_text)| {
+                let line = cx
+                    .text_system()
+                    .shape_line(SharedString::from(line_text.to_string()), font_size, &runs)
+                    .unwrap();
+
+                let cursor_pos = line.x_for_index(cursor_offset);
+                let top = bounds.top() + i as f32 * line_height;
+
+                let (line_selection, line_cursor) = if selected_range.is_empty()
+                    && input.show_cursor(cx)
+                {
+                    (
+                        None,
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + cursor_pos, top),
+                                size(px(1.5), bounds.bottom() - top),
+                            ),
+                            gpui::blue(),
+                        )),
+                    )
+                } else {
+                    (
+                        Some(fill(
+                            Bounds::from_corners(
+                                point(bounds.left() + line.x_for_index(selected_range.start), top),
+                                point(
+                                    bounds.left() + line.x_for_index(selected_range.end),
+                                    bounds.bottom(),
+                                ),
+                            ),
+                            cx.theme().selection,
+                        )),
+                        None,
+                    )
+                };
+
+                if let Some(v) = line_cursor {
+                    cursor = Some(v);
+                }
+
+                if let Some(v) = line_selection {
+                    selection = Some(v);
+                }
+
+                line
+            })
+            .collect();
+
         PrepaintState {
-            line: Some(line),
+            lines,
             cursor,
             selection,
         }
@@ -631,8 +665,10 @@ impl Element for TextElement {
         if let Some(selection) = prepaint.selection.take() {
             cx.paint_quad(selection)
         }
-        let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, cx.line_height(), cx).unwrap();
+
+        for line in prepaint.lines.iter() {
+            line.paint(bounds.origin, cx.line_height(), cx).unwrap();
+        }
 
         if focused {
             if let Some(cursor) = prepaint.cursor.take() {
@@ -640,9 +676,13 @@ impl Element for TextElement {
             }
         }
         self.input.update(cx, |input, _cx| {
-            input.last_layout = Some(line);
+            input.last_layout = Some(prepaint.lines.clone());
         });
     }
+}
+
+enum LineFragment {
+    Line(ShapedLine),
 }
 
 impl Render for TextInput {
@@ -673,11 +713,17 @@ impl Render for TextInput {
             .on_double_click(cx.listener(|view, _, cx| {
                 view.select_all(&SelectAll, cx);
             }))
-            .size_full()
+            .w_full()
+            .cursor_text()
             .line_height(rems(1.25))
             .text_size(rems(0.875))
+            .gap_1()
             .py_2()
             .h_10()
+            .items_center()
+            .when(self.multiline, |this| {
+                this.min_h_10().h_full().items_start()
+            })
             .when(self.appearance, |this| {
                 this.bg(cx.theme().input)
                     .border_color(cx.theme().input)
@@ -693,8 +739,6 @@ impl Render for TextInput {
                     })
             })
             .when_some(self.prefix.clone(), |this, prefix| this.child(prefix))
-            .gap_1()
-            .items_center()
             .child(div().flex_grow().overflow_x_hidden().child(TextElement {
                 input: cx.view().clone(),
             }))

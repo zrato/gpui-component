@@ -65,9 +65,9 @@ impl InputStory {
         Self {
             input1,
             input2: cx.new_view(|cx| {
-                let mut input = TextInput::new(cx);
-                input.set_placeholder("Enter text here...", cx);
-                input
+                TextInput::new(cx)
+                    .multiline(true)
+                    .placeholder("This is a multiline textarea...")
             }),
             mash_input: mask_input,
             disabled_input: cx.new_view(|cx| {
