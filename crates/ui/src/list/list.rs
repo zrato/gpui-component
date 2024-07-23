@@ -201,7 +201,7 @@ where
                     search.await;
                     println!("-------- after search 1");
                     // Always wait 100ms to avoid flicker
-                    Timer::after(Duration::from_millis(100)).await;
+                    // Timer::after(Duration::from_millis(100)).await;
                     println!("-------- after search 2");
                     this.update(&mut cx, |this, cx| {
                         println!("-------- after search 4");
