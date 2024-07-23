@@ -197,7 +197,7 @@ where
                 self.set_loading(true, cx);
                 let search = self.delegate.perform_search(&text, cx);
 
-                self._search_task = cx.spawn(|this, mut cx| async move {
+                cx.spawn(|this, mut cx| async move {
                     search.await;
                     println!("-------- after search 1");
                     // Always wait 100ms to avoid flicker
@@ -210,7 +210,8 @@ where
                     })
                     .unwrap();
                     println!("-------- after search 3");
-                });
+                })
+                .detach()
             }
             InputEvent::PressEnter => self.action_confirm(&Confirm, cx),
             _ => {}
