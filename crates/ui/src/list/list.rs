@@ -199,12 +199,17 @@ where
 
                 self._search_task = cx.spawn(|this, mut cx| async move {
                     search.await;
+                    println!("-------- after search 1");
                     // Always wait 100ms to avoid flicker
                     Timer::after(Duration::from_millis(100)).await;
-                    let _ = this.update(&mut cx, |this, cx| {
+                    println!("-------- after search 2");
+                    this.update(&mut cx, |this, cx| {
+                        println!("-------- after search 4");
                         this.last_query = Some(text);
                         this.set_loading(false, cx);
-                    });
+                    })
+                    .unwrap();
+                    println!("-------- after search 3");
                 });
             }
             InputEvent::PressEnter => self.action_confirm(&Confirm, cx),
