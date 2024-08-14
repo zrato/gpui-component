@@ -388,11 +388,11 @@ impl<M: ManagedView> Element for Popover<M> {
 
                     let previous_focus_handle = cx.focused();
                     cx.subscribe(&new_content_view, move |modal, _: &DismissEvent, cx| {
-                        if modal.focus_handle(cx).contains_focused(cx) {
-                            if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
-                                cx.focus(previous_focus_handle);
-                            }
+                        // if modal.focus_handle(cx).contains_focused(cx) {
+                        if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
+                            cx.focus(previous_focus_handle);
                         }
+                        // }
                         *old_content_view1.borrow_mut() = None;
                         close_popover(cx);
 
